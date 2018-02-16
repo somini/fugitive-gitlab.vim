@@ -9,52 +9,9 @@ function! gitlab#fugitive_handler(opts, ...)
     let line2  = get(a:opts, 'line2')
     let remote = get(a:opts, 'remote')
 
-    let domains = exists('g:fugitive_gitlab_domains') ? g:fugitive_gitlab_domains : []
-    let rel_path = {}
-
-    let domain_pattern = 'gitlab\.com'
-    for domain in domains
-        let domain = escape(split(domain, '://')[-1], '.')
-        let domain_path = matchstr(domain, '/')
-        if domain_path ==# '/'
-            let domain_path = substitute(domain,'^[^/]*/','','')
-        else
-            let domain_path = ''
-        endif
-        let domain_root = split(domain, '/')[0]
-        let domain_pattern .= '\|' . domain_root
-        let rel_path[domain_root] = domain_path
-    endfor
-
-    " Try and extract a domain name from the remote
-    " See https://git-scm.com/book/en/v2/Git-on-the-Server-The-Protocols for the types of protocols.
-    " If we can't extract the domain, we don't understand this protocol.
-    " git://domain:path
-    " https://domain/path
-    let repo = matchstr(remote,'^\%(https\=://\|git://\|git@\)\=\zs\('.domain_pattern.'\)[/:].\{-\}\ze\%(\.git\)\=$')
-    " ssh://user@domain:port/path.git
-    if repo ==# ''
-        let repo = matchstr(remote,'^\%(ssh://\%(\w*@\)\=\)\zs\('.domain_pattern.'\).\{-\}\ze\%(\.git\)\=$')
-        let repo = substitute(repo, ':[0-9]\+', '', '')
-    endif
-    if repo ==# ''
+    let root = gitlab#homepage_for_remote(remote)
+    if empty(root)
         return ''
-    endif
-
-    " look for http:// + repo in the domains array
-    " if it exists, prepend http, otherwise https
-    " git/ssh URLs contain : instead of /, http ones don't contain :
-    let repo_root = escape(split(split(repo, '://')[-1],':')[0], '.')
-    let repo_path = get(rel_path, repo_root, '')
-    if repo_path ==# ''
-        let repo = substitute(repo,':','/','')
-    else
-        let repo = substitute(repo,':','/' . repo_path . '/','')
-    endif
-    if index(domains, 'http://' . matchstr(repo, '^[^:/]*')) >= 0
-        let root = 'http://' . repo
-    else
-        let root = 'https://' . repo
     endif
 
     " work out what branch/commit/tag/etc we're on
@@ -94,6 +51,28 @@ function! gitlab#fugitive_handler(opts, ...)
     endif
 
     return url
+endfunction
+
+function! gitlab#homepage_for_remote(remote) abort
+    let domains = exists('g:fugitive_gitlab_domains') ? g:fugitive_gitlab_domains : []
+    call map(copy(domains), 'substitute(v:val, "/$", "", "")')
+    let domain_pattern = 'gitlab\.com'
+    for domain in domains
+        let domain_pattern .= '\|' . escape(split(domain, '://')[-1], '.')
+    endfor
+
+    " git://domain:path
+    " https://domain/path
+    " ssh://git@domain/path.git
+    let base = matchstr(a:remote, '^\%(https\=://\|git://\|git@\|ssh://git@\)\=\zs\('.domain_pattern.'\)[/:].\{-\}\ze\%(\.git\)\=$')
+
+    if index(domains, 'http://' . matchstr(base, '^[^:/]*')) >= 0
+        return 'http://' . tr(base, ':', '/')
+    elseif !empty(base)
+        return 'https://' . tr(base, ':', '/')
+    else
+        return ''
+    endif
 endfunction
 
 " vim: set ts=4 sw=4 et
